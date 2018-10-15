@@ -1,0 +1,602 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+\begin{titlepage}
+
+\newcommand{\HRule}{\rule{\linewidth}{0.5mm}} % Defines a new command for the horizontal lines, change thickness here
+
+\center % Center everything on the page
+ 
+%----------------------------------------------------------------------------------------
+%   HEADING SECTIONS
+%----------------------------------------------------------------------------------------
+
+\textsc{\LARGE University of Waterloo}\\[1.5cm] % Name of your university/college
+\textsc{\Large STAT 444 WINTER 2018}\\[0.5cm] % Major heading such as course name
+
+%----------------------------------------------------------------------------------------
+%   TITLE SECTION
+%----------------------------------------------------------------------------------------
+
+\HRule \\[0.4cm]
+{ \huge \bfseries Final Project Report}\\[0.4cm] % Title of your document
+\HRule \\[1.5cm]
+ 
+%----------------------------------------------------------------------------------------
+%   AUTHOR SECTION
+%----------------------------------------------------------------------------------------
+
+\begin{minipage}{0.4\textwidth}
+\begin{flushleft} \large
+\emph{Group V:}\\
+Xiao \textsc{Wang}(20532766)\\
+Yi \textsc{Qian}(20568216)\\
+Teng \textsc{Liu}(20508909)
+\end{flushleft}
+\end{minipage}
+~
+\begin{minipage}{0.4\textwidth}
+\begin{flushright} \large
+\emph{Instructor:} \\
+Kun \textsc{Liang}  % Supervisor's Name
+\end{flushright}
+\end{minipage}\\[2cm]
+
+%----------------------------------------------------------------------------------------
+%   DATE SECTION
+%----------------------------------------------------------------------------------------
+
+{\large \today}\\[2cm] % Date, change the \today to a set date if you want to be precise
+
+ 
+%----------------------------------------------------------------------------------------
+
+\vfill % Fill the rest of the page with whitespace
+
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+
+
+
+\section{Motivation and Introduction}
+For most people, owning a house is one of their life goals. Nowadays, house prices are growing so high that most people can't afford buying a house. We want to know what is effecting the house price and how it is effecting it.
+
+In reality, when people think about what is effecting the house price, features such as location, size of the house, number of bedrooms and bathrooms, size of the garage, size of the lot, what year the house was built in, etc., will come to mind. 
+
+In this project, our goal is to predict the house price in Ames, Lowa as precisely as we can. We have a response variable, SalePrice, which is the final price of the house, and 79 variables indicating different aspects. We will use different modelling methods, for example smoothing, random forests, and boosting methods, to build the model and eventually, find the one that fits the best.
+
+\section{Data Engineering}
+ The data was uploaded from Kaggle. We have two data set, training data set and test data set. Overall we have 80 variables, the responce variable Saleprice, 48 categrical variables and 31 continues variable. 
+\subsection{Loading Data and Data Size}
+We pick the first 10 variables for better understanding the data.
+```{r}
+train<-read.csv("~/Desktop/train.csv",stringsAsFactors = FALSE)
+test<-read.csv("~/Desktop/test.csv",stringsAsFactors = FALSE)
+head(train)[1:10]
+#number of variables
+message(sprintf("There are %s variables in the data set", length(train)))
+
+```
+
+\subsection{Important Data}
+ Since we have a large number of varibles, we could explore some important varibles at first.
+
+\subsubsection{Response Variable}
+```{r}
+library(ggplot2)
+summary(train$SalePrice)
+ggplot(train,aes(x=train$SalePrice)) +
+  geom_histogram(binwidth=8000,fill="steelblue") + 
+  ggtitle("SalePrice Histogram") +
+  ylab("number of houses")
+```
+From the graph we can see, the shape of the graph is skewed right, and most of the house price is between 80000 to 400000,hence, we can do a log transformation to generate for a linear regression.
+```{r}
+train$SalePrice<-log(train$SalePrice+1)
+qplot(SalePrice, data = train,bins = 50,main = "saleprice after log transformation")
+```
+Now, we see that the SalePrice is follow the normal distribution.
+
+
+\subsubsection{Correlation Matrix}
+To explore other important numeric variables, we could draw a correlation matrix to pick up the most important variables.First of all, let's filter the numeric variable, and then, draw the correlation plot.Since we have the large number of data, we only choose the correlation which its' abselute value is greater than 0.5.
+```{r}
+library(corrplot)
+#select the numeric variable
+num_Variable <- sapply(train, is.numeric) 
+#set up the numeric data set
+num_subset<-train[,num_Variable]
+num_cor <- cor(num_subset, use="pairwise.complete.obs")
+cor_sorted <- as.matrix(sort(num_cor[,'SalePrice'], decreasing = TRUE))
+filter_cor <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.5)))
+num_cor <- num_cor[filter_cor, filter_cor]
+corrplot(num_cor, method="number", tl.pos = "td", tl.cex = 1,cl.cex = 1,number.cex=0.8,type="upper")
+```
+
+There are 10 numeric variable with a high correlation. Now, we can do a data visualization to explore these important data for more detail. It is easy to explore the relationship between SalePrice and other important variables, as well as the relationship between relationship between the important variables. 
+```{r}
+pairs(~SalePrice+OverallQual+GrLivArea+GarageCars+GarageArea+TotalBsmtSF,data=train,
+      col="steelblue",
+      main="Relationship Between House Price and Top 5 Important Variables")
+pairs(~SalePrice+X1stFlrSF+FullBath+TotRmsAbvGrd+YearBuilt+YearRemodAdd,data=train,
+      col="steelblue",
+      main="Relationship Between House Price and Top 6-10 Important Variables")
+```
+
+\subsubsection{Overall Quality}
+Overall Quality has the highest correlation value. 
+The better the quality, the higher the price of the house, which is reasonable.
+```{r}
+ggplot(train,aes(x=factor(train$OverallQual),y=train$SalePrice)) +
+  geom_boxplot(fill="steelblue") +
+  ggtitle("Saleprice VS Overall Quality") +
+  ylab("HousePrice") +
+  xlab("Overall Quality") 
+```
+
+\subsubsection{Above Grade (Ground) Living Area Square Feet}
+Ground living area has the second highest correlation. The larger area, the higer price, which is make sence. It has a strong linear relationship.
+```{r}
+fit<-lm(SalePrice~GrLivArea,data=train)
+
+ggplot(train,aes(x=train$GrLivArea,y=train$SalePrice)) +
+  geom_point(aes(color='red')) + 
+  geom_smooth(method=lm,col="steelblue") +
+  ggtitle("Saleprice VS Ground living area") +
+  ylab("HousePrice") +
+  xlab("Ground Living Area")
+```
+
+\subsubsection{Size of Garage in Car Capacity}
+From the GG boxplot, we could see that the house with triple garage has the highest house value. Zero garage has the lowest, which is very much in line with reality.
+```{r}
+ggplot(train,aes(x=factor(train$GarageCars),y=train$SalePrice)) +
+  geom_boxplot(fill="steelblue") +
+  ggtitle("Saleprice VS Garage Cars") +
+  ylab("HousePrice") +
+  xlab("Size of garage in car capacity") 
+```
+
+\subsubsection{Size of Garage Area}
+Since the area of garage decides how many car can fit, it is reasonable that larger area has the higher price. We use the linear model and it fit perfectly.
+```{r}
+coef(lm(SalePrice~GarageArea,data=train))
+
+ggplot(train,aes(x=train$GarageArea,y=train$SalePrice)) +
+  geom_point(aes(color='red')) + 
+  geom_smooth(method=lm,col="steelblue") +
+  ggtitle("Saleprice VS Ground living area") +
+  ylab("HousePrice") +
+  xlab("Ground Living Area") 
+```
+
+
+
+\subsection{Preprocessing}
+\subsubsection{Smoothing Method (loess)}
+
+```{r}
+library(ggplot2)
+train <- read.csv("~/Desktop/train.csv")
+train <- train[, -1]
+test <- read.csv("~/Desktop/test.csv")
+test <- test[,  -1]
+ytestIndex <- which(colnames(train) %in% colnames(test) == F)
+ytest <- train[, ytestIndex]
+train <- train[, -ytestIndex]
+checkNA <- apply(train, 2, function(l){
+  length(which(is.na(l) == T))
+})
+dataFramCheckNA <- data.frame(index = c(1:length(checkNA)), NA_number = checkNA)
+ggplot(dataFramCheckNA, aes(x=index, y=NA_number)) + geom_point() + 
+  geom_hline(yintercept = dim(train)[1], col = "steelblue", linetype = "dashed")+
+  ggtitle("number of NA in each variable")
+```
+
+Some variable has too many NAs. In R, any model we use will omit the rows including NAs. If all these variables are in our model (e.g. `PoolQC`), the data size will reduce from 1460 to 7 (1460 - 1453) or less, which is not reasonable. Hence, we will delete the variables have more than 250 NAs
+
+```{r}
+NA250 <- which(checkNA > 250)
+new_train <-  train[, -NA250]
+new_test <- test[, -NA250]
+```
+
+\subsubsection{Variable Selection}
+
+Analysis of variance (ANOVA) is a collection of statistical models and variation among and between groups used to analyze the differences among group means.
+
+The partial F-test is the most common method of testing for a nested normal linear regression model. 
+
+\[ F^i = \frac{(RSS_{nest}^i - RSS_{full} )/ \Delta df }{RSS_{full}/(n - k)} \sim F(\Delta df, n-k)\]
+
+In anova table, the $RSS_{nest}^i$ is the residauls sum of square without the $i$th variable. Hence, larger $F^i$ value means that this variable is more important.
+```{r}
+library(MASS)
+fit <- lm(ytest ~. ,   data = new_train)
+ano <- anova(fit)
+head(ano)
+```
+
+Since the `loess` can only allow at most four numeric variables, we can only pick the first four largest F values. 
+
+```{r}
+ord <- order(ano$`F value`, decreasing = T)
+which(ord %in% c(1:4) == T)
+n <- dim(new_train)[1]
+
+```
+
+which are `MSZoning`, `LotArea`, `OverallQual` and `BsmtUnfSF`. However, `MSZoning` is categorical data, which is not allowed in `loess` model. Thus, we will replace `MSZoning` by `X2ndFlrSF`.
+
+```{r, warning=F}
+fit <- loess(ytest~ LotArea + OverallQual + BsmtUnfSF + X2ndFlrSF, data = new_train)
+summary(fit)
+```
+
+\subsubsection{Cross Validation}
+
+Cross-validation is a model validation technique for assessing how the results of a statistical analysis will generalize to an independent data set. It is mainly used in settings where the goal is prediction, and one wants to estimate how accurately a predictive model will perform in practice. In a prediction problem, a model is usually given a dataset of known data on which training is run (training dataset), and a dataset of unknown data (or first seen data) against which the model is tested (called the validation dataset or testing set). The goal of cross validation is to define a dataset to "test" the model in the training phase (i.e., the validation set), in order to limit problems like overfitting, give an insight on how the model will generalize to an independent dataset (i.e., an unknown dataset, for instance from a real problem)(from wiki). The most popular cross validation methods are $k$ fold cross validation ($k = 5$ or $10$) and leave one out.
+
+\subsubsection{5 Fold Cross Validation and Leave One Out}
+```{r, eval=F}
+CV <- function(n = dim(new_train)[1], new_train, kfold, ytest, leaveOneOut = F){
+  if(!leaveOneOut){
+    Sam <- sample(1:n, n, replace = F)
+    delta <- ceiling(n/kfold)
+    error <- sapply(1:kfold, function(i){
+      index <- delta * (i-1) + 1
+      s <- index:(index + delta - 1)
+      l <- Sam[s]
+      fit <- loess(ytest[-l] ~ LotArea + OverallQual + BsmtUnfSF + X2ndFlrSF, data = new_train[-l, ])
+      pred <- predict(fit, newdata = data.frame(new_train[l, ]))
+      abs(pred - ytest[l])
+    })
+    error
+  }else{
+    error <- sapply(1:n, function(i){
+      fit <- loess(ytest[-i] ~ LotArea + OverallQual + BsmtUnfSF + X2ndFlrSF, data = new_train[-i, ])
+      pred <- predict(fit, newdata = data.frame(new_train[i, ]))
+      abs(pred - ytest[i])
+    })
+    error
+  }
+} 
+# leave one out
+absError1 <- CV(n = dim(new_train)[1], new_train, kfold = NULL, ytest, leaveOneOut = T)
+# 5 fold cross validation
+absError5 <- CV(n = dim(new_train)[1], new_train, kfold = 5, ytest)
+```
+
+```{r, echo=F}
+absError1 <- read.csv("~/Desktop/absError1.csv")
+absError5 <- read.csv("~/Desktop/absError5.csv")
+```
+
+```{r}
+colnames(absError1) <- c("index", "absError")
+ggplot(absError1, aes(x=index, y=absError)) + geom_point() +
+  ggtitle("Leave one out")
+# average of absolue predicted error
+mean(absError1[,2], na.rm = T)
+# average of squared predicted error
+mean(absError1[,2]^2, na.rm = T)
+
+
+absError5_mean <- apply(absError5[, -1], 2, function(l){
+  mean(l, na.rm = TRUE)
+})
+absError5_mean <- as.data.frame(cbind(c(1:5) ,absError5_mean))
+colnames(absError5_mean) <- c("index", "absError")
+ggplot(absError5_mean, aes(x=index, y=absError)) + geom_point() +
+  ggtitle("5 fold cross validation")
+# average of absolue predicted error
+mean(absError5_mean[, 2])
+# average of squared predicted error
+mean(absError5[,-1]^2, na.rm = T)
+```
+
+\subsubsection{Generalized Cross Validation}
+
+Generalized cross validation is defined as
+
+\[APSE({\cal{P}_0, \mu}) = \frac{1}{N} \sum_{i = 1}^N (\frac{y_i - \hat{\mu}(x_i)}{1 - h_{ii}})^2\]
+
+where $\mathbf{H} = (\mathbf{X}^T\mathbf{X})^{-1}\mathbf{X}^T\mathbf{y}$, $h_{ii}$ is the diagonal value of matrix $\mathbf{H}$
+
+```{r}
+fit <- lm(ytest ~ LotArea + OverallQual + BsmtUnfSF + X2ndFlrSF, data = new_train)
+fitted <- fit$fitted
+lev <-  hat(model.matrix(fit))
+1/n * sum ( ((ytest - fitted )/(1 - lev) )^2 )
+```
+
+\subsubsection{Missing Data}
+
+Oberve that there are many columns have the missing data 'NA'; however, when we do model fit, the missing value will reduce our forecast result.Therefore, fixing the 'NA' variable is needed. Furthermore, when we do the modeling part, it is better to transform the categorical variables to a numeric form.
+We use Python language to process the data, so we hide the process.  
+The algorithm we is replacing the numeric missing variables by their average, and using the one hot encoding to process the categorical variables, so the categorical variables will be replaced by matrix that comtain only contain number of 1 or 0.
+
+Here is the processed data set. For more detail, Let's observe a little part of the data set to see what does the training data set look like.
+```{r}
+train_pro<-read.csv("~/Desktop/train_processed.csv",stringsAsFactors = FALSE)
+test_pro<-read.csv("~/Desktop/test_processed.csv",stringsAsFactors = FALSE)
+head(train_pro)[1:10]
+```
+
+After the feature engineering, we should do the correlation matrix again to see have does the correlation between SalePrice and other features change.
+```{r}
+library(corrplot)
+num_cor <- cor(train_pro, use="pairwise.complete.obs")
+cor_sorted <- as.matrix(sort(num_cor[,'SalePrice'], decreasing = TRUE))
+filter_cor <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.5)))
+num_cor <- num_cor[filter_cor, filter_cor]
+corrplot(num_cor, method="number", tl.pos = "td", tl.cex = 1,cl.cex = 1,number.cex=0.8,type="upper")
+```
+
+Note that the there are 14 variables contain in the correlation matrix for now. We see that kitchen quality is a important feature too.
+
+```{r}
+pairs(~SalePrice+OverallQual+GrLivArea+GarageCars+GarageArea+TotalBsmtSF+X1stFlrSF+FullBath,data=train_pro,
+      col="steelblue",
+      main="Relationship Between House Price and Top 5 Important Variables")
+pairs(~SalePrice+BsmtQual_Ex+TotRmsAbvGrd+YearBuilt+YearRemodAdd+KitchenQual_Ex+KitchenQual_TA+ExterQual_TA,data=train_pro,
+      col="steelblue",
+      main="Relationship Between House Price and Top 6-10 Important Variables")
+```     
+We can easily observe that there are three variables transform from categorical to numeric by one hot encoding.
+
+
+
+\section{Model Training}
+\subsection{Linear Model}
+```{r}
+library(Metrics)
+library(munsell)
+library(caret)
+train_pro<-read.csv("~/Desktop/train_processed.csv",stringsAsFactors = FALSE)
+
+#Randomly shuffle the data
+train_pro<-train_pro[sample(nrow(train_pro)),]
+
+#Create 10 equally size folds
+folds <- cut(seq(1,nrow(train_pro)),breaks=5,labels=FALSE)
+
+#Perform 5 fold cross validation
+for(i in 1:5){
+    #Segement your data by fold using the which() function 
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- train_pro[testIndexes, ]
+    trainData <- train_pro[-testIndexes, ]
+
+    #Use the test and train data partitions however you desire...
+    lm_train<-lm(SalePrice ~ ., data=trainData)
+    prediction <- predict(lm_train, testData, type="response")
+    # do error here for each fold
+    #print(prediction)
+    #print(testData$SalePrice)
+}
+model_output<-cbind(testData,prediction)
+model_output$log_pre<-log(model_output$prediction)
+model_output$log_sp<-log(model_output$SalePrice)
+rmse(model_output$log_sp,model_output$log_pre)
+
+```
+\subsubsection{Importance of Variables}
+The coefficient can report the importance of variables. Larger coefficient is more important to the model
+```{r}
+head(sort(coef(lm_train),decreasing = T))
+```
+
+
+
+
+\subsection{Random Forest}
+
+```{r}
+library(randomForest)
+
+train_pro<-read.csv("~/Desktop/train_processed.csv",stringsAsFactors = FALSE)
+
+#Randomly shuffle the data
+train_pro<-train_pro[sample(nrow(train_pro)),]
+
+#Create 10 equally size folds
+folds <- cut(seq(1,nrow(train_pro)),breaks=5,labels=FALSE)
+
+#Perform 5 fold cross validation
+for(i in 1:5){
+    #Segement your data by fold using the which() function 
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- train_pro[testIndexes, ]
+    trainData <- train_pro[-testIndexes, ]
+
+    #Use the test and train data partitions however you desire...
+    tr.rf<-randomForest(SalePrice~ .,data=trainData)
+    prediction<-predict(tr.rf, testData)
+    # do error here for each fold
+    #print(prediction)
+    #print(testData$SalePrice)
+}
+model_output<-cbind(testData,prediction)
+model_output$log_pre<-log(model_output$prediction)
+model_output$log_sp<-log(model_output$SalePrice)
+rmse(model_output$log_sp,model_output$log_pre)
+```
+\subsubsection{Importance of Variables}
+Here is the variable importance plot. 
+```{r}
+varImpPlot(tr.rf,col='steelblue',lwd=2,main="Importance of variables")
+```
+
+
+
+
+\subsection{Boosting}
+```{r}
+library(gbm)
+
+train_pro<-read.csv("~/Desktop/train_processed.csv",stringsAsFactors = FALSE)
+
+#Randomly shuffle the data
+train_pro<-train_pro[sample(nrow(train_pro)),]
+
+#Create 10 equally size folds
+folds <- cut(seq(1,nrow(train_pro)),breaks=5,labels=FALSE)
+#help(gbm)
+#Perform 5 fold cross validation
+for(i in 1:5){
+    #Segement your data by fold using the which() function 
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- train_pro[testIndexes, ]
+    trainData <- train_pro[-testIndexes, ]
+
+    #Use the test and train data partitions however you desire...
+    gbmf<-gbm(SalePrice ~ ., data=trainData, distribution="gaussian", n.trees=800, interaction.depth=5,
+           n.minobsinnode=10, shrinkage=0.01, bag.fraction=0.75, cv.folds=5, verbose=FALSE)
+    
+    prediction<-predict(gbmf, testData)
+    # do error here for each fold
+    # print(prediction)
+    # print(testData$SalePrice)
+}
+
+model_output<-cbind(testData,prediction)
+model_output$log_pre<-log(model_output$prediction)
+model_output$log_sp<-log(model_output$SalePrice)
+rmse(model_output$log_sp,model_output$log_pre)
+```
+
+
+\subsubsection{Importance of Variables}
+The rel.inf can report the importance of variables. We also use the varImp function to test the importance of varience. Larger rel.inf value is more important to the model. Here are some variables with high value, which is important.
+```{r}
+head(summary(gbmf))
+iv<-varImp(gbmf,numTrees = 50)
+iv[iv$Overall>0,-1]
+```
+
+These are the important variables.
+
+
+
+\section{Statistical Conclusions}
+For this report, we use one hot encoding to process the data, and we use the average value to replace the missing value. For the model training part, the best log-loss of each single model is GBM , and it was much better than the other two algorithms. For Linear Model, the log-loss is 0.15. We use the processed data to do the linear regression directly. And then, we try the random forest. The random forst give us 0.138 log-loss, which is better than linear model but does not excess the GBM.  GBM produces the best result, which is 0.12 log-loss. We use n.trees=800, and 5-fold cross validation to randomly divide the training set into five parts.
+
+\section{Conclusions in the Context of the Problem}
+After the analysis and the model training, a conclusion can be given by this project. First of all, when people want to buy a house, they should focus on the overall quality as the first step. The overall quality is the most important feature that affects the house price. The better the quality, the higher the price. Secondly, the Above grade living area is also a very influential condition. For most situations, larger area has a higher price, which satisfies people's common sence. In addition, buyer should focus on the garage area (or the number of parking spaces), total number of bathrooms, number of full baths, the age of the houses, the houses' remodel date and so on. 
+ 
+
+\section{Future Work}
+Even though we had relatively decent results, we could still improve our model in variety of ways. Realized that the original features function poorly before we applied the feature engineerings, so there might be new features that are useful on building our model. In addition, we can do some process about the outlier, and we can also try other model; for example Lasso regression model, Xgboost model. In conclusion, our team had provided a reasonable solution for the House Prices competition which introduced a model which predicts the corresponding house price given by varies kinds of features.
+
+\section{Contribution}
+
+Introduction: Teng LIU
+
+Data visualiaztion: Xiao WANG,Yi QIAN
+
+Smoothing method: Yi QIAN
+
+Data Processing(Cleaning): Xiao WANG
+
+Modeling:
+
+ - Linear model: Xiao Wang, Yi QIAN
+ 
+ - Random Forest: Xiao WANG , Teng LIU
+ 
+ - Boost: Xiao WANG
+ 
+Conclusion: Xiao Wang, Yi QIAN, Teng LIU
+
+Report Writing: Xiao Wang, Yi QIAN, Teng LIU
+
+Appendix: Teng LIU 
+
+\section{Appendix}
+
+\subsection{Data}
+
+All data are downloaded from Kaggle. 
+
+Important variables: 
+
+OverallQual: Rates the overall material and finish of the house. 1 is very poor and 10 is very excellent. 
+
+GrLivArea: Above grade (ground) living area square feet
+
+GarageCar: Size of garage in car capacity
+
+GarageArea: Size of garage in square feet
+
+TotalBsmtSF: Total square feet of basement are
+
+X1stFlrSF: First Floor square feet
+
+FullBath: Full bathrooms above grade
+
+TotRmsAbvGrd: Total rooms above grade (does not include bathrooms)
+
+YearBuilt: Original construction date
+
+YearRemodAdd: Remodel date (same as construction date if no remodelling or additions)
+
+GarageCars and GarageArea, TotalBsmtSF and X1stFlrSF, GrLivArea and TotRmsAbvGrd are highly correlated.
+
+\subsection{Literature}
+
+Most of the analyses done by other teams used random forest method. Some also used general linear regression, LASSO, Extreme Gradient Boosting, Generalized Boosted Regression Modelling, etc. One of the best results used hard coding. They took the log of the response variable and used 32 most significant variables to model linear regression model. 
+
+The following information are from Deepu on Kaggle: 
+
+https://www.kaggle.com/deepu123/housing-prices
+
+First, there's a massive part of data cleaning. 
+
+Then the author tried different modelling methods:
+
+Linear Regression with numeric variables only
+
+Linear Regression with reduced numeric variables
+
+Linear Regression with all variables (reduced)
+
+Linear Regression with log transformed response variable
+
+Linear Regression with log transformed response and some feature variables
+
+Lasso Regression
+
+Extreme Gradient Boosting
+
+All variables are hard-coded, only important variables are included (i.e variable reduced)
+
+The RMSE results are:
+
+0.2316
+
+0.232
+
+0.169
+
+0.14020
+
+0.13904
+
+0.15815
+
+0.14844
+
+The following information are from Sonali Chawla on Kaggle:
+
+https://www.kaggle.com/sona58/house-prices-in-r
+
+Similarly, the project started with data cleaning.
+
+Then the author used Random Forest Method to model and had a RMSE score of 0.15499
